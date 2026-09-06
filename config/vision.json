@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "provider": null,
+  "model": null,
+  "api_key_env": "XHS_IMAGE_API_KEY",
+  "api_base": null,
+  "style_suffix": "扁平插画风，低饱和白底+橙色点缀，简洁留白，无文字",
+  "size": "3:4"
+}

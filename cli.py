@@ -22,7 +22,6 @@ import report
 import studio
 import style as style_mod
 
-
 def _c(args: argparse.Namespace):
     return db.connect(db_path=Path(args.db) if args.db else None)
 
@@ -88,6 +87,15 @@ def cmd_journal_topics(args) -> None:
     width = max(len(r["name"]) for r in rows)
     for r in rows:
         print(f"{r['name']:<{width}}  ×{r['count']:<3}  最近 {r['last_day']}")
+
+
+def cmd_journal_ingest(args) -> None:
+    import ingest  # noqa: PLC0415
+
+    folder = Path(args.dir) if args.dir else None
+    with _c(args) as conn:
+        summary = ingest.ingest_dir(conn, folder=folder)
+    print(f"入库 {summary['files']} 个文件（日期：{summary['days']}）→ 已归档 {summary['archive']}")
 
 
 # ---------------- studio ----------------
@@ -278,6 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--group", choices=["category", "tag"], default="category")
     tp.add_argument("--limit", type=int, default=15)
     tp.set_defaults(fn=cmd_journal_topics)
+
+    ig = js.add_parser("ingest", help="读取 inbox 文件夹的日记文件入库并归档")
+    ig.add_argument("--dir", default=None, help="素材文件夹（默认 <仓库>/inbox）")
+    ig.set_defaults(fn=cmd_journal_ingest)
 
     st = sub.add_parser("studio", help="创作工坊")
     sts = st.add_subparsers(dest="sub", required=True)

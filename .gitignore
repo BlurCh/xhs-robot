@@ -2,6 +2,8 @@
 data/*.db
 drafts/
 pulls/
+inbox/*
+!inbox/.gitkeep
 .selftest/
 .chrome-xhs*/
 .pw-profile/

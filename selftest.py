@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPO))
 
 import covers  # noqa: E402
 import db  # noqa: E402
+import ingest  # noqa: E402
 import report  # noqa: E402
 import site_auto  # noqa: E402
 import studio  # noqa: E402
@@ -94,6 +95,25 @@ def _run(tmp: Path) -> None:
     assert cover_png.exists()
     with Image.open(cover_png) as im:
         assert im.size == (900, 1200), im.size
+
+    # ---- inbox 输入通道：读文件入库并归档 ----
+    inbox = tmp / "inbox"
+    inbox.mkdir()
+    (inbox / "2026-09-01-早.md").write_text(
+        "分类: 心情\n标签: 焦虑, 备孕\n\n昨晚没睡好，早上起来有点焦虑，怕又白忙一个月。",
+        encoding="utf-8",
+    )
+    (inbox / "20260903.txt").write_text("今天陪老婆去医院复查，医生让放松心态。", encoding="utf-8")
+    with db.connect(db_path) as conn:
+        summary = ingest.ingest_dir(conn, folder=inbox)
+        assert summary["files"] == 2 and len(summary["days"]) == 2, summary
+        assert (inbox / "archive" / "2026-09-01-早.md").exists()
+        assert not (inbox / "20260903.txt").exists()
+        rows = db.journal_list(conn, day="2026-09-01")
+        assert len(rows) == 1
+        assert rows[0]["category"] == "心情" and rows[0]["tags"] == ["焦虑", "备孕"]
+        assert "白忙一个月" in rows[0]["text"]
+    print("OK  ingest inbox")
 
     # ---- v2/v3：posts / metrics / account_daily + 导入 ----
     with db.connect(db_path) as conn:

@@ -225,6 +225,21 @@ def cmd_live_detail(args) -> None:
     print(f"detail result: ok={len(result.get('ok', []))} fail={len(result.get('fail', {}))}")
 
 
+def cmd_env_net(_args) -> None:
+    import vpn  # noqa: PLC0415
+
+    st = vpn.net_state()
+    print(f"国内可达(小红书)={st['cn']}  国外可达={st['intl']}")
+    if not st["cn"]:
+        print("提示：小红书不可达——若你正开 Astrill 全局 VPN，需先断开；可用 `env vpn --apply` 尝试断开。")
+
+
+def cmd_env_vpn(args) -> None:
+    import vpn  # noqa: PLC0415
+
+    vpn.plan(apply=args.apply)
+
+
 # ---------------- main ----------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -347,6 +362,14 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--out", default=None, help="输出目录（默认 <仓库>/pulls/details）")
     pd.add_argument("--max", type=int, default=20, help="最多抓取篇数")
     pd.set_defaults(fn=cmd_live_detail)
+
+    en = sub.add_parser("env", help="网络/VPN 状态助手")
+    ens = en.add_subparsers(dest="sub", required=True)
+    en1 = ens.add_parser("net", help="报告国内/国外可达性")
+    en1.set_defaults(fn=cmd_env_net)
+    en2 = ens.add_parser("vpn", help="查看/断开 Astrill（默认只读，--apply 才执行）")
+    en2.add_argument("--apply", action="store_true", help="真正执行断开动作")
+    en2.set_defaults(fn=cmd_env_vpn)
     return p
 
 

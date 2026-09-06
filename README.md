@@ -52,8 +52,9 @@ python C:\Harness_Projects\xhs-robot\cli.py studio save --day <YYYY-MM-DD> --tit
 1. **P2 属于网页自动化**：违反平台规则，有被限流/封号风险。只在**个人号（试验号）**上灰度；发布前默认向用户展示成稿确认。平台改版会导致选择器失效，需要维护。
 2. 本工具不保证流量：小红书推荐是黑盒算法，文案/话题优化只提高概率。
 3. Cookie、二维码、账号凭据不进对话、不进 git、不进日志。
-4. 日志与草稿为个人内容，本地存储；`data/`、`drafts/`、`.venv/` 已在 .gitignore。
-5. P1 生成的是**文案与帖子包**，不含图片；封面文字建议在 `post.md` 的 `cover_text` 字段。
+4. **push 红线**：`data/`、`drafts/`、`.pw-profile/`（含登录态）、`.chrome-xhs*/`、`.venv/` 均在 .gitignore；推送到远端前先跑 `git ls-files | findstr /i "chrome pw-profile venv xhs.db"` 确认输出为空（本仓库历史已做过一次净化）。
+5. 日志与草稿为个人内容，本地存储。
+6. P1 生成的是**文案与帖子包**，不含图片；封面文字建议在 `post.md` 的 `cover_text` 字段，封面图由 `covers make` 生成。
 
 ## 自测
 

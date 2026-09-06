@@ -151,6 +151,45 @@ def import_pull_json(conn, path: str | Path, *, snapshot_day: str | None = None)
     return {"notes": len(seen_posts), "metrics": metrics_rows}
 
 
+_ACCOUNT_SERIES = {
+    "view_list": "views",
+    "impl_count_list": "impl",      # 疑似“曝光”口径（界面中文待确认）
+    "like_list": "likes",
+    "collect_list": "collects",
+    "comment_list": "comments",
+    "share_list": "shares",
+    "rise_fans_list": "fans_gain",
+}
+
+
+def import_account_base(conn, path: str | Path) -> dict[str, Any]:
+    """导入数据中心 account/base（7/30 天逐日序列）到 account_daily，从今天起积累趋势。"""
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    cn = timezone(timedelta(hours=8))  # 上海时间
+    raw = Path(path).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    if isinstance(data, dict) and "body" in data and isinstance(data["body"], str):
+        data = json.loads(data["body"])
+    seven = (data.get("data") or {}).get("seven") or {}
+    days: dict[str, dict[str, int]] = {}
+    for series_name, metric in _ACCOUNT_SERIES.items():
+        for item in seven.get(series_name) or []:
+            ts = int(item.get("date") or 0)
+            if not ts:
+                continue
+            day = datetime.fromtimestamp(ts / 1000, tz=cn).date().isoformat()
+            days.setdefault(day, {})[metric] = int(item.get("count") or 0)
+    for day, vals in days.items():
+        db.account_daily_upsert(
+            conn, day=day,
+            views=vals.get("views", 0), impl=vals.get("impl", 0), likes=vals.get("likes", 0),
+            collects=vals.get("collects", 0), comments=vals.get("comments", 0),
+            shares=vals.get("shares", 0), fans_gain=vals.get("fans_gain", 0),
+        )
+    return {"days": len(days)}
+
+
 def report_markdown(conn, *, top: int = 5) -> str:
     """趋势 + 单篇表现 + 文案归因线索。归因解读留给 Agent/用户。"""
     posts = db.posts_with_metrics(conn, require_snapshots=1)

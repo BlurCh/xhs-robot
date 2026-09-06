@@ -218,6 +218,13 @@ def cmd_live_pull(args) -> None:
     print(f"pull result: {result.get('status')} rows={result.get('rows')} json={result.get('json_bodies')}")
 
 
+def cmd_live_detail(args) -> None:
+    sa = _site()
+    out_dir = Path(args.out) if args.out else None
+    result = sa.pull_note_details(out=out_dir, headless=args.headless, max_notes=args.max)
+    print(f"detail result: ok={len(result.get('ok', []))} fail={len(result.get('fail', {}))}")
+
+
 # ---------------- main ----------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -334,6 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--headless", action="store_true", help="默认无头运行（登录态已持久化）")
     pl.add_argument("--out", default=None, help="输出目录（默认 <仓库>/pulls）")
     pl.set_defaults(fn=cmd_live_pull)
+
+    pd = lvs.add_parser("detail", help="逐篇抓取笔记详情（7/30天趋势接口，含请求参数）")
+    pd.add_argument("--headless", action="store_true")
+    pd.add_argument("--out", default=None, help="输出目录（默认 <仓库>/pulls/details）")
+    pd.add_argument("--max", type=int, default=20, help="最多抓取篇数")
+    pd.set_defaults(fn=cmd_live_detail)
     return p
 
 

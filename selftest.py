@@ -95,9 +95,15 @@ def _run(tmp: Path) -> None:
     with Image.open(cover_png) as im:
         assert im.size == (900, 1200), im.size
 
-    # ---- v2：posts / metrics + 导入 + 报表 ----
+    # ---- v2/v3：posts / metrics / account_daily + 导入 ----
     with db.connect(db_path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        db.account_daily_upsert(conn, day="2026-09-01", views=5, impl=20, likes=1)
+        al = db.account_daily_list(conn, days=3)
+        assert len(al) == 1 and al[0]["impl"] == 20
+        db.account_daily_upsert(conn, day="2026-09-01", views=7, impl=21)
+        al = db.account_daily_list(conn, days=3)
+        assert al[0]["views"] == 7 and al[0]["impl"] == 21
         db.posts_upsert(conn, note_id="a" * 24, day=d2, title="复盘三步法实测", tags=["复盘"])
         db.posts_upsert(conn, note_id="b" * 24, day=d1, title="读书笔记：认知觉醒", tags=["读书"])
         db.metrics_upsert(conn, note_id="a" * 24, day=d2, impressions=500, views=300, likes=20, collects=10)

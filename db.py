@@ -2,6 +2,7 @@
 
 Schema v1: journal（日志历史）。
 Schema v2: + posts（已发布笔记元数据）、metrics（创作者中心每日数据快照）。
+Schema v3: + account_daily（账号级每日趋势，来自数据中心 account/base）。
 迁移方式：升 PRAGMA user_version 并追加 DDL。
 """
 from __future__ import annotations
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL_V1 = """
 CREATE TABLE IF NOT EXISTS journal (
@@ -57,6 +58,19 @@ CREATE TABLE IF NOT EXISTS metrics (
 );
 """
 
+DDL_V3 = """
+CREATE TABLE IF NOT EXISTS account_daily (
+  day       TEXT PRIMARY KEY,
+  views     INTEGER NOT NULL DEFAULT 0,
+  impl      INTEGER NOT NULL DEFAULT 0,
+  likes     INTEGER NOT NULL DEFAULT 0,
+  collects  INTEGER NOT NULL DEFAULT 0,
+  comments  INTEGER NOT NULL DEFAULT 0,
+  shares    INTEGER NOT NULL DEFAULT 0,
+  fans_gain INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 
 def default_db_path() -> Path:
     root = Path(__file__).resolve().parent
@@ -87,6 +101,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     if version < 2:
         conn.executescript(DDL_V2)
         version = 2
+    if version < 3:
+        conn.executescript(DDL_V3)
+        version = 3
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -272,6 +289,38 @@ def posts_with_metrics(
         sql = sql.replace("WHERE p.status = 'published'", "WHERE p.status = 'published' AND p.day >= ?")
         args.insert(0, since_day)
     return [_row(r) for r in conn.execute(sql, args).fetchall()]
+
+
+# ---------------- account_daily（v3，账号级每日趋势） ----------------
+
+def account_daily_upsert(
+    conn: sqlite3.Connection,
+    *,
+    day: str,
+    views: int = 0,
+    impl: int = 0,
+    likes: int = 0,
+    collects: int = 0,
+    comments: int = 0,
+    shares: int = 0,
+    fans_gain: int = 0,
+) -> None:
+    conn.execute(
+        """INSERT INTO account_daily(day, views, impl, likes, collects, comments, shares, fans_gain)
+           VALUES(?,?,?,?,?,?,?,?)
+           ON CONFLICT(day) DO UPDATE SET
+             views=excluded.views, impl=excluded.impl, likes=excluded.likes,
+             collects=excluded.collects, comments=excluded.comments, shares=excluded.shares,
+             fans_gain=excluded.fans_gain""",
+        (day, views, impl, likes, collects, comments, shares, fans_gain),
+    )
+
+
+def account_daily_list(conn: sqlite3.Connection, *, days: int = 30) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM account_daily ORDER BY day DESC LIMIT ?", (days,)
+    ).fetchall()
+    return [_row(r) for r in rows]
 
 
 # ---------------- helpers ----------------

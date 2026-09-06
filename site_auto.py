@@ -303,7 +303,7 @@ _ROW_JS = r"""
 
 
 def _collect_network_json(page, out_dir: Path, max_bodies: int = 40) -> list[dict]:
-    """监听页面网络响应，把疑似“笔记数据 JSON”的响应体保存下来供列映射。"""
+    """监听页面网络响应，把疑似“笔记数据 JSON”的响应连同请求方式/参数保存下来。"""
     captured: list[dict] = []
 
     def on_response(resp):
@@ -314,10 +314,17 @@ def _collect_network_json(page, out_dir: Path, max_bodies: int = 40) -> list[dic
                 return
             if not any(k in url for k in ("note", "content", "data", "list", "publish", "article")):
                 return
+            req = resp.request
+            post_data = req.post_data if req else None
             body = resp.text()
             if len(body) < 200 or len(captured) >= max_bodies:
                 return
-            captured.append({"url": url, "body": body[:200_000]})
+            captured.append({
+                "url": url,
+                "method": (req.method if req else "GET"),
+                "post_data": post_data[:4000] if post_data else None,
+                "body": body[:200_000],
+            })
         except Exception:  # noqa: BLE001 - 跨域/流式响应取不到就跳过
             pass
 
@@ -387,3 +394,91 @@ def pull_notes(*, out: Path | None = None, headless: bool = True) -> dict:
         print(f"抓取完成：列表行 {len(rows)} 条，网络 JSON {len(captured)} 个 → {out_dir}")
         ctx.close()
         return result
+
+
+# ============ 取数：逐篇笔记详情（内容管理 → 点开分析 → 抓 note_detail 等接口） ============
+
+DETAIL_TRIGGER_TEXTS = ["数据分析", "查看数据", "分析", "数据"]
+
+
+def pull_note_details(*, out: Path | None = None, headless: bool = True, max_notes: int = 20) -> dict:
+    """对已登记的每篇笔记：进内容管理→点开该篇分析页→抓详情接口（含请求参数）落盘。
+
+    页面结构常改，属校准型代码：先跑通一篇看 pulls/details/<note_id>/ 里的接口与参数，
+    再决定是否/如何批量。返回 {ok: [note_id...], fail: {note_id: err}}。
+    """
+    base = Path(out) if out else REPO / "pulls" / "details"
+    base.mkdir(parents=True, exist_ok=True)
+    with db.connect() as conn:
+        posts = db.posts_list(conn, status="published")
+    ok, fail = [], {}
+    for p in posts[:max_notes]:
+        note_id, title = p["note_id"], p.get("title") or ""
+        od = base / note_id
+        od.mkdir(parents=True, exist_ok=True)
+        err = None
+        try:
+            with sync_playwright() as pw:
+                ctx = pw.chromium.launch_persistent_context(
+                    str(PROFILE_DIR), headless=headless,
+                    args=["--disable-blink-features=AutomationControlled"])
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                captured = _collect_network_json(page, od, max_bodies=80)
+                _open(page, CREATOR_HOME, wait_ms=6000)
+                if login_state(page) == "login_required":
+                    raise RuntimeError("login_required")
+                landed = False
+                for url in CONTENT_MANAGER_URLS:
+                    try:
+                        _open(page, url, wait_ms=7000)
+                        landed = True
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+                if not landed:
+                    page.get_by_text("内容管理", exact=False).first.click(timeout=4000)
+                    page.wait_for_timeout(5000)
+                # 用标题定位该篇所在行，优先点行内“数据/分析”类按钮
+                hint = (title or note_id)[:8]
+                clicked = False
+                try:
+                    loc = page.get_by_text(hint, exact=False).first
+                    loc.wait_for(state="visible", timeout=6000)
+                    row = loc.locator(
+                        "xpath=ancestor::tr[1] | ancestor::li[1] | ancestor::div[contains(@class,'note')][1]"
+                    ).first
+                    for t in DETAIL_TRIGGER_TEXTS:
+                        try:
+                            row.get_by_text(t, exact=False).first.click(timeout=2500)
+                            clicked = True
+                            break
+                        except Exception:  # noqa: BLE001
+                            continue
+                    if not clicked:
+                        loc.click(timeout=3000)  # 没有按钮就点标题行
+                        clicked = True
+                except Exception as e:  # noqa: BLE001
+                    err = f"locate_row: {e}"
+                page.wait_for_timeout(9000)
+                (od / "screen.png").write_bytes(page.screenshot())
+                for i, cap in enumerate(captured):
+                    (od / f"network-{i:02d}.json").write_text(
+                        json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+                text = ""
+                try:
+                    text = page.evaluate("document.body ? document.body.innerText.slice(0, 6000) : ''")
+                except Exception:  # noqa: BLE001
+                    pass
+                (od / "page-text.txt").write_text(text, encoding="utf-8")
+                ctx.close()
+            if err:
+                fail[note_id] = err
+            else:
+                ok.append(note_id)
+                print(f"✓ {note_id} {title[:20]} → {od}")
+        except Exception as e:  # noqa: BLE001
+            fail[note_id] = str(e)[:200]
+            print(f"✗ {note_id}: {str(e)[:120]}")
+    (base / "summary.json").write_text(json.dumps({"ok": ok, "fail": fail}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"详情抓取完成：ok={len(ok)} fail={len(fail)} → {base}")
+    return {"ok": ok, "fail": fail}

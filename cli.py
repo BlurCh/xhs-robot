@@ -205,6 +205,13 @@ def cmd_live_publish(args) -> None:
         print(f"未发布成功：{result.get('status')}（步骤：{result.get('steps')}）")
 
 
+def cmd_live_pull(args) -> None:
+    sa = _site()
+    out_dir = Path(args.out) if args.out else None
+    result = sa.pull_notes(out=out_dir, headless=args.headless)
+    print(f"pull result: {result.get('status')} rows={result.get('rows')} json={result.get('json_bodies')}")
+
+
 # ---------------- main ----------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -312,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     lp.add_argument("--images-dir", default=None, help="图片目录（默认 drafts/<day>/img 或封面）")
     lp.add_argument("--debug-shots", action="store_true", help="每步截图到 drafts/<day>/debug（校准用）")
     lp.set_defaults(fn=cmd_live_publish)
+
+    pl = lvs.add_parser("pull", help="抓取已发布笔记列表/数据到 pulls/（供入库分析）")
+    pl.add_argument("--headless", action="store_true", help="默认无头运行（登录态已持久化）")
+    pl.add_argument("--out", default=None, help="输出目录（默认 <仓库>/pulls）")
+    pl.set_defaults(fn=cmd_live_pull)
     return p
 
 

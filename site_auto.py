@@ -281,3 +281,109 @@ def register_published(day: str, note_id: str) -> None:
         db.posts_upsert(conn, note_id=note_id, day=day, title=payload["title"],
                         tags=payload["tags"], cover_text=payload["cover_text"], body=payload["body"])
     print(f"已登记发布 {note_id} → `posts list` 可查")
+
+
+# ============ 取数：抓已发布笔记（内容管理页 + 网络 JSON 兜底） ============
+
+CONTENT_MANAGER_URLS = [
+    "https://creator.xiaohongshu.com/new/note-manager?source=official",
+    "https://creator.xiaohongshu.com/note-manager",
+]
+_ROW_JS = r"""
+() => {
+  const sels = ['tr', '[class*="note-item"]', '[class*="content-item"]', '[class*="list-item"]', 'li'];
+  for (const s of sels) {
+    const els = [...document.querySelectorAll(s)];
+    const rows = els.map(e => (e.innerText || '').replace(/\s+/g, ' ').trim()).filter(t => t.length > 8);
+    if (rows.length > 2) return rows.slice(0, 300);
+  }
+  return [];
+}
+"""
+
+
+def _collect_network_json(page, out_dir: Path, max_bodies: int = 40) -> list[dict]:
+    """监听页面网络响应，把疑似“笔记数据 JSON”的响应体保存下来供列映射。"""
+    captured: list[dict] = []
+
+    def on_response(resp):
+        try:
+            ctype = resp.headers.get("content-type", "")
+            url = resp.url
+            if "json" not in ctype and "text" not in ctype:
+                return
+            if not any(k in url for k in ("note", "content", "data", "list", "publish", "article")):
+                return
+            body = resp.text()
+            if len(body) < 200 or len(captured) >= max_bodies:
+                return
+            captured.append({"url": url, "body": body[:200_000]})
+        except Exception:  # noqa: BLE001 - 跨域/流式响应取不到就跳过
+            pass
+
+    page.on("response", on_response)
+    return captured
+
+
+def pull_notes(*, out: Path | None = None, headless: bool = True) -> dict:
+    """抓实验账号已发布笔记：内容管理列表文本 + 网络 JSON 兜底，落盘供人工/离线解析。
+
+    产物（out 目录）：rows.txt（列表行文本）、network-*.json（疑似数据接口响应）、
+    summary.json、screen.png。返回摘要 dict。列映射需人工/后续校准。
+    """
+    out_dir = Path(out) if out else REPO / "pulls"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result: dict = {"status": "failed", "rows": 0, "json_bodies": 0, "out": str(out_dir)}
+
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless,
+                                                    args=["--disable-blink-features=AutomationControlled"])
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        captured = _collect_network_json(page, out_dir)
+
+        # 1) 创作者中心首页
+        _open(page, CREATOR_HOME, wait_ms=8000)
+        if login_state(page) == "login_required":
+            result["status"] = "login_required"
+            ctx.close()
+            return result
+        # 2) 尝试直达内容管理，或从首页点“内容管理/笔记管理”
+        landed = False
+        for url in CONTENT_MANAGER_URLS:
+            try:
+                _open(page, url, wait_ms=8000)
+                landed = True
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        if not landed:
+            for text in ("内容管理", "笔记管理", "作品管理", "管理"):
+                try:
+                    page.get_by_text(text, exact=False).first.click(timeout=4000)
+                    page.wait_for_timeout(6000)
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        page.wait_for_timeout(4000)
+        (out_dir / "screen.png").write_bytes(page.screenshot())
+        try:
+            rows = list(page.evaluate(_ROW_JS))
+        except Exception as e:  # noqa: BLE001
+            rows = []
+            result["dom_error"] = str(e)
+        # 3) 落盘
+        (out_dir / "rows.txt").write_text("\n".join(f"- {r}" for r in rows), encoding="utf-8")
+        body_text = ""
+        try:
+            body_text = page.evaluate("document.body ? document.body.innerText.slice(0, 8000) : ''")
+        except Exception:  # noqa: BLE001
+            pass
+        (out_dir / "page-text.txt").write_text(body_text, encoding="utf-8")
+        for i, cap in enumerate(captured):
+            (out_dir / f"network-{i:02d}.json").write_text(
+                json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        result.update(status="ok", rows=len(rows), json_bodies=len(captured))
+        (out_dir / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"抓取完成：列表行 {len(rows)} 条，网络 JSON {len(captured)} 个 → {out_dir}")
+        ctx.close()
+        return result

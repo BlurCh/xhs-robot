@@ -1,6 +1,7 @@
 # 本地数据与草稿不纳入版本库（个人内容）
 data/*.db
 drafts/
+pulls/
 .selftest/
 .chrome-xhs*/
 .pw-profile/

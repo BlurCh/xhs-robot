@@ -26,21 +26,21 @@ NOTE_ID_RE = re.compile(r"[0-9a-fA-F]{24}")
 
 # ============ 唯一需要校准的地方（页面改版时改这里） ============
 SELECTORS = {
+    "image_text_tab": "text=上传图文",
     "title_input": [
+        'input[placeholder*="填写标题"]',
+        'input.d-text',
         'input[placeholder*="标题"]',
-        'textarea[placeholder*="标题"]',
-        'input.title-input',
-        'div.note-editor input',
     ],
     "body_editable": [
-        '[contenteditable="true"]',
+        '.tiptap.ProseMirror',
         'div.ql-editor',
-        'div[data-placeholder*="正文"]',
+        '[contenteditable="true"]',
     ],
     "file_input": 'input[type="file"]',
     "topic_add_btn": 'text=添加话题',
     "topic_search_input": ['input[placeholder*="搜索"]', 'input[placeholder*="话题"]'],
-    "publish_btn": ["button:has-text('发布')", "text=发布笔记"],
+    "publish_btn": ["text=发布笔记", "button:has-text('发布')", "text=发布"],
     "confirm_btn": ["text=继续发布", "text=确认", "button:has-text('确定')"],
 }
 LOGIN_MARKERS_JS = (
@@ -132,16 +132,94 @@ def cmd_status(*, headless: bool = True) -> str:
         return state
 
 
+def _dump_dom(page, path: Path) -> None:
+    try:
+        js = """() => {
+          const out = {url: location.href};
+          out.inputs = [...document.querySelectorAll('input, textarea')].map(e => ({
+            tag: e.tagName, type: e.type||'', ph: e.placeholder||'', cls: (e.className||'').toString().slice(0,100)
+          })).slice(0, 60);
+          out.contenteditable = [...document.querySelectorAll('[contenteditable="true"]')].map(e => ({
+            ph: e.getAttribute('data-placeholder')||'', cls: (e.className||'').toString().slice(0,100)
+          })).slice(0, 10);
+          out.buttons = [...document.querySelectorAll('button')].map(e => (e.innerText||'').trim())
+            .filter(t => t && t.length < 14).slice(0, 80);
+          return out;
+        }"""
+        import json  # noqa: PLC0415
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(page.evaluate(js), ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _log(*a):
+    print(*a, flush=True)
+
+
+def _visible_editor(page) -> dict:
+    """返回可见的输入框/富文本编辑区清单，用于按真实 DOM 定位标题与正文。"""
+    return page.evaluate(
+        """() => {
+          const vis = el => { const r = el.getBoundingClientRect();
+            const s = getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden'; };
+          const ins = [...document.querySelectorAll('input, textarea')].filter(vis)
+            .map((e, i) => ({i, tag: e.tagName, type: e.type || '', ph: e.placeholder || '',
+                              aria: e.getAttribute('aria-label') || '', cls: (e.className || '').toString().slice(0, 80)}));
+          const cets = [...document.querySelectorAll('[contenteditable="true"]')].filter(vis)
+            .map((e, i) => ({i, ph: e.getAttribute('data-placeholder') || '', aria: e.getAttribute('aria-label') || '',
+                              cls: (e.className || '').toString().slice(0, 80), txt: (e.innerText || '').length}));
+          return {ins, cets};
+        }"""
+    )
+
+
+def _click_red_center(page, shot_path: Path) -> bool:
+    """像素定位法：在截图底部区域找红色按钮块，换算页面坐标鼠标点击。
+
+    用于按钮藏在 shadow DOM / 非常规标签时的兜底。返回是否找到并点击。
+    """
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(shot_path).convert("RGB")
+        w, h = img.size
+        px = img.load()
+        pts = []
+        for y in range(int(h * 0.45), h):
+            for x in range(int(w * 0.2), w):
+                r, g, b = px[x, y]
+                if r > 150 and g < 130 and b < 130:
+                    pts.append((x, y))
+        if len(pts) < 300:
+            return False
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        span_w, span_h = max(xs) - min(xs), max(ys) - min(ys)
+        # 按钮形态：宽 ≥50，高在 20~150 之间，避免误中大面积横幅
+        if span_w < 50 or span_h < 20 or span_h > 150 or span_w > w * 0.8:
+            return False
+        cx, cy = int(sum(xs) / len(xs)), int(sum(ys) / len(ys))
+        page.mouse.click(cx, cy)
+        _log(f"coordinate-clicked red button at ({cx},{cy}) span=({span_w}x{span_h})")
+        return True
+    except Exception as e:  # noqa: BLE001
+        _log(f"red-click unavailable: {type(e).__name__}")
+        return False
+
+
 def publish_image_post(*, day: str, yes: bool = False, headless: bool = False,
                        images_dir: Path | None = None, debug_shots: bool = False,
                        no_topics: bool = False) -> dict:
     """读取 drafts/<day> 的定稿并发布图文。返回 {status, note_id, url}。"""
     payload = build_payload(day, images_dir)
-    print("准备发布内容：")
-    print(f"  标题：{payload['title']}")
-    print(f"  正文 {len(payload['body'])} 字｜话题：{payload['tags']}｜图片 {len(payload['images'])} 张")
+    _log("准备发布内容：")
+    _log(f"  标题：{payload['title']}")
+    _log(f"  正文 {len(payload['body'])} 字｜话题：{payload['tags']}｜图片 {len(payload['images'])} 张")
     for p in payload["images"]:
-        print(f"    - {p}")
+        _log(f"    - {p}")
     if not yes:
         ans = input("确认以上内容无误？发布到当前登录的小红书账号。输入 y 继续：").strip().lower()
         if ans not in ("y", "yes", "是"):
@@ -150,10 +228,17 @@ def publish_image_post(*, day: str, yes: bool = False, headless: bool = False,
     shot_dir = REPO / "drafts" / day / "debug"
     result: dict = {"status": "failed", "note_id": None, "url": None, "steps": []}
 
+    def mark(step: str):
+        result["steps"].append(step)
+        _log("STEP:", step)
+
     def shot(name: str):
         if debug_shots:
             shot_dir.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(shot_dir / f"{name}.png"))
+            try:
+                page.screenshot(path=str(shot_dir / f"{name}.png"))
+            except Exception:  # noqa: BLE001
+                pass
 
     def try_click(candidates: list[str], *, timeout_ms: int = 5000) -> bool:
         for sel in candidates:
@@ -172,56 +257,100 @@ def publish_image_post(*, day: str, yes: bool = False, headless: bool = False,
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         _open(page, PUBLISH_URL)
         if login_state(page) == "login_required":
-            print("未登录。请先运行：cli.py live login（扫码一次）。")
+            _log("未登录。请先运行：cli.py live login。")
             ctx.close()
             return {"status": "login_required", **result}
-        shot("0_after_open")
-
-        # 1) 上传图片
+        # 0) 切"上传图文"
         try:
-            page.locator(SELECTORS["file_input"]).first.set_input_files(payload["images"], timeout=60000)
-            page.wait_for_timeout(12000)  # 上传 + 处理留缓冲
+            page.get_by_text("上传图文", exact=False).last.click(timeout=6000)
+            mark("tab_clicked")
         except Exception as e:  # noqa: BLE001
-            result["steps"].append(f"upload_failed: {e}")
+            mark(f"tab_failed: {e}")
+        page.wait_for_timeout(4000)
+        shot("0_after_tab")
+        _dump_dom(page, shot_dir / "dom-0-tab.json")
+
+        # 1) 上传图片（accept 含 jpg 的文件框）
+        try:
+            idx = int(page.evaluate(
+                """() => {
+                  const els = [...document.querySelectorAll('input[type="file"]')];
+                  for (let i = 0; i < els.length; i++)
+                    if ((els[i].accept || '').toLowerCase().includes('jpg')) return i;
+                  return els.length - 1;
+                }"""
+            ))
+            page.locator('input[type="file"]').nth(idx).set_input_files(payload["images"], timeout=60000)
+            mark("uploaded")
+        except Exception as e:  # noqa: BLE001
+            mark(f"upload_failed: {e}")
+            _dump_dom(page, shot_dir / "dom-1-upload-fail.json")
             shot("1_upload_fail")
             ctx.close()
             return result
-        result["steps"].append("uploaded")
+        page.wait_for_timeout(10000)
         shot("1_after_upload")
+        _dump_dom(page, shot_dir / "dom-1-upload.json")
 
-        # 2) 标题
-        if not try_click_title_fill(payload["title"], page):
-            result["steps"].append("title_not_filled")
-        else:
-            result["steps"].append("title_filled")
-        shot("2_after_title")
-
-        # 3) 正文（contenteditable 支持 fill）
-        filled_body = False
-        for sel in SELECTORS["body_editable"]:
-            loc = page.locator(sel).first
-            try:
-                loc.wait_for(state="visible", timeout=4000)
-                loc.click(timeout=4000)
-                loc.fill(payload["body"], timeout=10000)
-                filled_body = True
+        # 2) 等标题框出现并填写（精确选择器）
+        title_ok, body_ok = False, False
+        title_loc = None
+        for attempt in range(15):
+            for sel in SELECTORS["title_input"]:
+                loc = page.locator(sel).first
+                try:
+                    loc.wait_for(state="visible", timeout=2500)
+                    title_loc = loc
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+            if title_loc is not None:
                 break
-            except Exception:  # noqa: BLE001
-                continue
-        result["steps"].append("body_filled" if filled_body else "body_not_filled")
-        shot("3_after_body")
+            page.wait_for_timeout(1500)
+        if title_loc is not None:
+            try:
+                title_loc.click(timeout=4000)
+                title_loc.fill(payload["title"], timeout=8000)
+                val = (title_loc.input_value(timeout=3000) or "")
+                title_ok = payload["title"][:6] in val
+            except Exception as e:  # noqa: BLE001
+                mark(f"title_fill_err: {type(e).__name__}")
+        mark("title_filled" if title_ok else "title_not_found")
+        shot("2_after_title")
+        _dump_dom(page, shot_dir / "dom-2-title.json")
 
-        # 4) 话题
+        # 3) 填正文并校验（精确选择器）
+        if title_ok:
+            for sel in SELECTORS["body_editable"]:
+                loc = page.locator(sel).first
+                try:
+                    loc.wait_for(state="visible", timeout=4000)
+                    loc.click(timeout=5000)
+                    loc.fill(payload["body"], timeout=15000)
+                    got = (loc.inner_text(timeout=5000) or "").strip()
+                    body_ok = len(got) >= 50
+                    if body_ok:
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+        mark("body_filled" if body_ok else "body_not_filled")
+        shot("3_after_body")
+        _dump_dom(page, shot_dir / "dom-3-body.json")
+        if not (title_ok and body_ok):
+            ctx.close()
+            return result
+
+        # 4) 话题（找不到就快速跳过，不阻塞发布）
         if not no_topics and payload["tags"]:
             added = 0
             for tag in payload["tags"]:
-                if not try_click(SELECTORS["topic_add_btn"]):
+                if not try_click(SELECTORS["topic_add_btn"], timeout_ms=2000):
                     continue
                 search = None
                 for sel in SELECTORS["topic_search_input"]:
                     loc = page.locator(sel).first
                     try:
-                        loc.wait_for(state="visible", timeout=4000)
+                        loc.wait_for(state="visible", timeout=3000)
                         loc.fill(tag)
                         search = loc
                         break
@@ -229,35 +358,79 @@ def publish_image_post(*, day: str, yes: bool = False, headless: bool = False,
                         continue
                 if search is None:
                     continue
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(1200)
                 try:
-                    page.locator("li, .topic-item, [class*=suggest]").first.click(timeout=4000)
+                    page.locator("li, .topic-item, [class*=suggest]").first.click(timeout=3000)
                     added += 1
                 except Exception:  # noqa: BLE001
                     pass
-                page.wait_for_timeout(800)
-            result["steps"].append(f"topics_added={added}")
+            mark(f"topics_added={added}")
         shot("4_after_topics")
 
-        # 5) 发布
-        if not try_click(SELECTORS["publish_btn"], timeout_ms=8000):
-            result["steps"].append("publish_btn_not_found")
-            shot("5_publish_fail")
+        # 5) 发布：点左侧红色“发布笔记”，再处理可能的确认弹窗
+        if not try_click(SELECTORS["publish_btn"], timeout_ms=6000):
+            mark("publish_btn_not_found")
+            _dump_dom(page, shot_dir / "dom-5-no-publish.json")
             ctx.close()
             return result
-        page.wait_for_timeout(6000)
-        # 可能的二次确认/风险提示弹窗
-        try_click(SELECTORS["confirm_btn"], timeout_ms=3000)
-        page.wait_for_timeout(6000)
+        mark("publish_clicked")
+        page.wait_for_timeout(2500)
+        # 兜底：滚动到底部，用像素法点红色发布按钮（处理 shadow DOM 等情况）
+        try:
+            for _ in range(3):
+                page.mouse.wheel(0, 1200)
+                page.wait_for_timeout(700)
+            shot_dir.mkdir(parents=True, exist_ok=True)
+            tmp_png = shot_dir / "coordinate.png"
+            page.screenshot(path=str(tmp_png))
+            _click_red_center(page, tmp_png)
+            page.wait_for_timeout(3000)
+        except Exception:  # noqa: BLE001
+            pass
+        # 弹窗确认：找非侧栏区域(x>208)新出现的“发布/确认/确定/继续发布”类按钮并点击
+        try:
+            dialog_target = page.evaluate(
+                """() => {
+                  const vis = el => { const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+                  const hits = [];
+                  for (const e of document.querySelectorAll('button,div,span,a')) {
+                    if (e.childElementCount > 2 || !vis(e)) continue;
+                    const r = e.getBoundingClientRect();
+                    const t = (e.textContent || '').trim().replace(/\\s+/g, '');
+                    if (r.x > 208 && /(发布|确认|确定|继续|完成)/.test(t) && t.length <= 8) {
+                      hits.push({x: Math.round(r.x), y: Math.round(r.y), t});
+                    }
+                  }
+                  hits.sort((a, b) => b.y - a.y || a.x - b.x);
+                  return hits[0] ? hits[0].t : null;
+                }"""
+            )
+            if dialog_target:
+                loc = page.get_by_text(dialog_target, exact=True).last
+                loc.wait_for(state="visible", timeout=3000)
+                loc.click(timeout=4000)
+                mark(f"dialog_confirm:{dialog_target}")
+        except Exception as e:  # noqa: BLE001
+            mark(f"dialog_skip: {type(e).__name__}")
+        page.wait_for_timeout(8000)
         shot("5_after_publish")
         url = page.url
-        note_id = extract_note_id(url) or extract_note_id(page.content())
-        result.update(status="published" if note_id or "success" in url else "published_unverified",
-                      note_id=note_id, url=url, steps=result["steps"])
-        print(f"发布结果：{result['status']} note_id={note_id}")
+        try:
+            content_sniff = str(page.evaluate("document.body ? document.body.innerText.slice(0, 3000) : ''"))
+        except Exception:  # noqa: BLE001
+            content_sniff = ""
+        success_text = ("发布成功" in content_sniff) or ("审核" in content_sniff) or ("已发布" in content_sniff)
+        note_id = extract_note_id(url) or extract_note_id(content_sniff)
+        result.update(status="published" if (success_text or note_id or "success" in url) else "published_unverified",
+                      note_id=note_id, url=url)
+        _log(f"发布结果：{result['status']} note_id={note_id}")
         (REPO / "drafts" / day / "publish-result.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        ctx.close()
+        try:
+            ctx.close()
+        except Exception:  # noqa: BLE001
+            pass
         return result
 
 

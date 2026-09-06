@@ -44,12 +44,14 @@ def _print_rows(rows: list[dict]) -> None:
 
 def cmd_journal_add(args) -> None:
     day = style_mod.normalize_day(args.day)
-    if args.text:
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8").strip()
+    elif args.text:
         text = " ".join(args.text)
     else:
         text = sys.stdin.read().strip()
     if not text:
-        print("错误：正文为空。用参数传文字或经 stdin 输入。", file=sys.stderr)
+        print("错误：正文为空。用参数传文字、--file 指定 UTF-8 文件，或经 stdin 输入。", file=sys.stderr)
         sys.exit(2)
     cat = args.category
     if cat == "auto":
@@ -263,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--category", choices=style_mod.categories() + ["auto"], default="auto", help="分类，auto=关键词猜测")
     a.add_argument("--tags", default="", help="逗号分隔标签")
     a.add_argument("--mood", default=None, help="心情词（可选）")
+    a.add_argument("--file", default=None, help="从 UTF-8 文件读正文（推荐，避免控制台编码问题）")
     a.add_argument("text", nargs="*", help="正文；不传则从 stdin 读")
     a.set_defaults(fn=cmd_journal_add)
 

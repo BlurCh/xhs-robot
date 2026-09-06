@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,56 @@ def import_creator_csv(conn, path: str | Path, *, default_day: str | None = None
         )
         n += 1
     return {"rows": n, "posts": len(seen)}
+
+
+def import_pull_json(conn, path: str | Path, *, snapshot_day: str | None = None) -> dict[str, Any]:
+    """导入 live pull 抓到的 posted 列表 JSON（network-*.json 捕获格式或裸响应体）。
+
+    映射字段：id/note_id、display_title/title、likes/like_count、collected_count/collect_count、
+    comments_count/comment_count、shared_count/share_count、view_count、visible_time（发布时间）。
+    发布时间取 visible_time（epoch 秒）；快照日默认今天。返回 {notes, metrics} 计数。
+    """
+    from datetime import date, datetime, timedelta, timezone  # noqa: PLC0415
+
+    raw = Path(path).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    if isinstance(data, dict) and "body" in data and isinstance(data["body"], str):
+        data = json.loads(data["body"])
+    notes = (data.get("data") or {}).get("notes") or []
+    if not notes and isinstance(data.get("data"), list):
+        notes = data["data"]
+    today = snapshot_day or date.today().isoformat()
+    seen_posts: set[str] = set()
+    metrics_rows = 0
+    for n in notes:
+        if not isinstance(n, dict):
+            continue
+        note_id = str(n.get("id") or n.get("note_id") or "").strip()
+        if not note_id:
+            continue
+        title = str(n.get("display_title") or n.get("title") or "未命名").strip()
+        day = today
+        vt = _num(n.get("visible_time"))
+        if vt:
+            day = datetime.fromtimestamp(vt, tz=timezone.utc).date().isoformat()
+        db.posts_upsert(conn, note_id=note_id, day=day, title=title,
+                        status="published", published_at=day)
+        seen_posts.add(note_id)
+        db.metrics_upsert(
+            conn,
+            note_id=note_id,
+            day=today,
+            impressions=0,
+            views=_num(n.get("view_count")),
+            likes=_num(n.get("likes") or n.get("like_count")),
+            collects=_num(n.get("collected_count") or n.get("collect_count")),
+            comments=_num(n.get("comments_count") or n.get("comment_count")),
+            shares=_num(n.get("shared_count") or n.get("share_count")),
+            new_followers=0,
+            extra={"source": "live_pull"},
+        )
+        metrics_rows += 1
+    return {"notes": len(seen_posts), "metrics": metrics_rows}
 
 
 def report_markdown(conn, *, top: int = 5) -> str:

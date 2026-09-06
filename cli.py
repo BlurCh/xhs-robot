@@ -150,6 +150,12 @@ def cmd_stats_import(args) -> None:
     print(f"导入完成：{summary['rows']} 行 / {summary['posts']} 篇笔记")
 
 
+def cmd_stats_pull_import(args) -> None:
+    with _c(args) as conn:
+        summary = report.import_pull_json(conn, args.file, snapshot_day=args.day)
+    print(f"导入完成：{summary['notes']} 篇笔记 / {summary['metrics']} 条快照")
+
+
 def cmd_stats_report(args) -> None:
     with _c(args) as conn:
         md = report.report_markdown(conn)
@@ -292,6 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     si.add_argument("--file", required=True, help="CSV 路径")
     si.add_argument("--day", default=None, help="快照日（CSV 无日期列时使用）")
     si.set_defaults(fn=cmd_stats_import)
+    si2 = sts.add_parser("pull-import", help="导入 live pull 抓取的 posted 列表 JSON")
+    si2.add_argument("--file", required=True, help="pulls/network-*.json 路径")
+    si2.add_argument("--day", default=None, help="快照日（默认今天）")
+    si2.set_defaults(fn=cmd_stats_pull_import)
     sr = sts.add_parser("report", help="生成趋势/归因报表（markdown）")
     sr.add_argument("--out", default=None, help="写入文件；缺省打印到屏幕")
     sr.set_defaults(fn=cmd_stats_report)

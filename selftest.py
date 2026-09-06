@@ -4,6 +4,7 @@ r"""第一期自测（无框架）：db / style / studio / cli 冒烟。
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,24 @@ def _run(tmp: Path) -> None:
         j2 = db.posts_with_metrics(conn, require_snapshots=1)
         imported = [r for r in j2 if r["title"] == "导入测试笔记"]
         assert len(imported) == 1 and imported[0]["likes"] == 50
+
+    # live pull 接口 JSON 导入（posted 列表捕获格式）
+    pull_json = tmp / "network-pull.json"
+    pull_json.write_text(json.dumps({
+        "url": "https://creator.xiaohongshu.com/api/galaxy/v2/creator/note/user/posted?tab=0&page=0",
+        "body": json.dumps({"data": {"notes": [
+            {"id": "ab" * 12, "display_title": "拉取笔记A", "view_count": "99", "likes": "8",
+             "collected_count": "4", "comments_count": "2", "shared_count": "1", "visible_time": "1775729122"},
+        ]}}),
+    }), encoding="utf-8")
+    with db.connect(db_path) as conn:
+        summary = report.import_pull_json(conn, pull_json, snapshot_day=d0)
+        assert summary == {"notes": 1, "metrics": 1}, summary
+        rows = db.posts_list(conn)
+        pulled = [r for r in rows if r["note_id"] == "ab" * 12]
+        assert len(pulled) == 1 and pulled[0]["title"] == "拉取笔记A"
+        hist = db.metrics_history(conn, note_id="ab" * 12)
+        assert hist[0]["views"] == 99 and hist[0]["likes"] == 8 and hist[0]["shares"] == 1, hist
 
     # CLI 冒烟补充：posts / stats（第二轮）
     report_path = tmp / "report.md"

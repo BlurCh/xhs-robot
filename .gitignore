@@ -2,6 +2,7 @@
 data/*.db
 drafts/
 pulls/
+assets/
 inbox/*
 !inbox/.gitkeep
 .selftest/

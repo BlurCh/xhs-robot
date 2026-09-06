@@ -87,10 +87,13 @@ $C = 'python C:\Harness_Projects\xhs-robot\cli.py'
 ## 能力边界（诚实声明）
 
 - **P1（可用）**：日志记录/分类/检索/主题聚合、风格卡、选题弹药、文案与话题生成、定稿落盘。
-- **P2（代码已交付，真机联调待用户本机运行）**：Playwright 自动化 `live login/status/publish`
-  + 数据回流 `posts`/`stats`（CSV 导入与报表）。⚠️ 本会话沙箱到不了小红书——**真机动作请用户
-  按 OPERATION.md 在本机双击 `setup.bat` → `live_login.bat` → `live_publish.bat` 执行**；
-  首次发布需 `--debug-shots` 校准选择器，把截图发回由维护者更新 site_auto.py 的 SELECTORS。
-  自动发布有封号风险，只允许个人号试验 + 发布前人工确认（默认强制，除非 --yes）。
-- **P3（前半可用）**：统一风格封面 `covers make`（本地渲染）。生图/漫画 API 待用户提供 key 后接入。
+- **P2（发布链路已真机打通，2026-09-07 首次成功）**：Playwright 自动化可完成
+  登录态检查→切"上传图文"→传图→填标题/正文（逐项校验）→数据回流入库。
+  ⚠️ 两个已知限制：
+  1) 最终「发布」按钮是 closed-shadow 自定义组件（`<xhs-publish-btn>`），自动化点不到，
+     需有头窗口+真人点一次（脚本会填好内容并等待）；话题自动添加也不可靠（正文写 `#话题` 代替）；
+  2) **发布请严格按 `C:\Harness_Projects\xhs-robot\PUBLISH_PLAYBOOK.md` 执行**，禁止即兴操作；
+     成功判定以 posted 列表为准，页面里的 24 位 id 可能是误报。
+  真机动作（登录/发布/取数）仍需在能访问小红书的网络下运行；风险与灰度纪律见 OPERATION.md。
+- **P3（前半可用）**：统一风格封面 `covers make`。生图/漫画 API 待用户提供 key 后接入。
 - 自动发布的"热度优化"只是提高概率；数据结论以创作者中心导出为准。

@@ -11,3 +11,7 @@ inbox/*
 __pycache__/
 *.pyc
 .venv/
+comfyui/
+
+gen/
+

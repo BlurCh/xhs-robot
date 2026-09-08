@@ -19,7 +19,9 @@ INPUT_DIR = COMFY / "input"
 OUT_DIR = COMFY / "output"
 HOST, PORT = "127.0.0.1", 8188
 
-NEGATIVE = "text, 文字, watermark, logo, blurry, low quality, worst quality, deformed, extra limbs, bad anatomy"
+NEGATIVE = ("text, 文字, 字, words, letters, symbols, 符号, 对话框, speech bubble, frame, 分格, 漫画边框, border, "
+            "panel, watermark, logo, sticker, 贴纸, cutout, white box, 白色方块, plain white background, "
+            "blurry, low quality, worst quality, deformed, 变形, extra limbs, bad anatomy, 歪鼻子")
 SIZE = (768, 1024)  # 3:4
 
 
@@ -52,17 +54,19 @@ def build_graph(positive: str, refs: list[str], seed: int, negative: str = NEGAT
     neg = add("CLIPTextEncode", {"text": negative, "clip": [ckpt, 1]})
     latent = add("EmptyLatentImage", {"width": SIZE[0], "height": SIZE[1], "batch_size": 1})
 
-    # 角色参考：统一加载器后，对每张参考图依次应用 IPAdapter（链式）
-    loader = add("IPAdapterUnifiedLoader", {"model": [ckpt, 0], "preset": "PLUS (high strength)"})
-    cur_model = [loader, 0]
-    for idx, ref in enumerate(refs):
-        img = add("LoadImage", {"image": ref})
-        w = 0.8 if idx == 0 else 0.6
-        nxt = add("IPAdapter", {
-            "model": cur_model, "ipadapter": [loader, 1], "image": [img, 0],
-            "weight": w, "start_at": 0.0, "end_at": 1.0, "weight_type": "standard",
-        })
-        cur_model = [nxt, 0]
+    cur_model = [ckpt, 0]
+    if refs:
+        # 角色参考：统一加载器后，对每张参考图依次应用 IPAdapter（链式）
+        loader = add("IPAdapterUnifiedLoader", {"model": [ckpt, 0], "preset": "PLUS (high strength)"})
+        cur_model = [loader, 0]
+        for idx, ref in enumerate(refs):
+            img = add("LoadImage", {"image": ref})
+            w = 0.7 if idx == 0 else 0.55
+            nxt = add("IPAdapter", {
+                "model": cur_model, "ipadapter": [loader, 1], "image": [img, 0],
+                "weight": w, "start_at": 0.0, "end_at": 1.0, "weight_type": "standard",
+            })
+            cur_model = [nxt, 0]
 
     sample = add("KSampler", {
         "model": cur_model, "positive": [pos, 0], "negative": [neg, 0],
@@ -112,9 +116,11 @@ def main() -> None:
     ap.add_argument("positive")
     ap.add_argument("out")
     ap.add_argument("--refs", nargs="*", default=["img-01.jpg", "img-02.jpg"])
+    ap.add_argument("--no-refs", action="store_true", help="纯文生图（不带角色参考）")
     ap.add_argument("--seed", type=int, default=None)
     a = ap.parse_args()
-    print(generate(a.positive, a.out, a.refs, a.seed))
+    refs = [] if a.no_refs else a.refs
+    print(generate(a.positive, a.out, refs, a.seed))
 
 
 if __name__ == "__main__":

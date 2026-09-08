@@ -33,10 +33,11 @@ def load_config() -> dict:
     cfg = {}
     if CONFIG.exists():
         try:
-            cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+            cfg = json.loads(CONFIG.read_text(encoding="utf-8-sig"))  # 兼容 Windows 记事本/PowerShell 的 BOM
         except (json.JSONDecodeError, OSError):
             cfg = {}
     key = os.environ.get("ARK_API_KEY", "") or cfg.get("api_key", "")
+    key = key.strip().strip('"').strip("'") if isinstance(key, str) else ""
     if not key:
         raise SystemExit(
             "缺少豆包 API key。两种方式：\n"

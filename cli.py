@@ -184,7 +184,26 @@ def cmd_covers_make(args) -> None:
     print(f"封面已生成 {path}")
 
 
-# ---------------- live（P2 真机自动化；惰性导入 site_auto） ----------------
+# ---------------- live（默认停用：方案A 半自动人工） ----------------
+
+def _live_guard() -> None:
+    """自动化闸门：config/auto_guard.json 未显式 enabled 时拒绝执行 live 命令。"""
+    try:
+        import json  # noqa: PLC0415
+
+        guard = json.loads(Path("config/auto_guard.json").read_text(encoding="utf-8"))
+        if guard.get("enabled"):
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    print(
+        "自动化已停用（方案A，2026-09-08 起）：当前账号处于风控冷却期，请手动发布/查看。\n"
+        "内容包照常生成（文案/图片在 drafts 或 gen 下），由你在小红书 App 手动上传。\n"
+        "如需在全新试验小号上重启用：编辑 config/auto_guard.json 将 enabled 改为 true（风险自担）。",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 
 def _site():
     import site_auto  # noqa: PLC0415
@@ -193,6 +212,7 @@ def _site():
 
 
 def cmd_live_login(args) -> None:
+    _live_guard()
     sa = _site()
     print("请在打开的浏览器中扫码/登录小红书（个人号试验）。")
     result = sa.cmd_login(headless=args.headless, wait_minutes=args.wait_minutes)
@@ -200,11 +220,13 @@ def cmd_live_login(args) -> None:
 
 
 def cmd_live_status(args) -> None:
+    _live_guard()
     sa = _site()
     sa.cmd_status(headless=args.headless)
 
 
 def cmd_live_publish(args) -> None:
+    _live_guard()
     day = style_mod.normalize_day(args.day)
     sa = _site()
     images_dir = Path(args.images_dir) if args.images_dir else None
@@ -222,6 +244,7 @@ def cmd_live_publish(args) -> None:
 
 
 def cmd_live_pull(args) -> None:
+    _live_guard()
     sa = _site()
     out_dir = Path(args.out) if args.out else None
     result = sa.pull_notes(out=out_dir, headless=args.headless)
@@ -229,6 +252,7 @@ def cmd_live_pull(args) -> None:
 
 
 def cmd_live_detail(args) -> None:
+    _live_guard()
     sa = _site()
     out_dir = Path(args.out) if args.out else None
     result = sa.pull_note_details(out=out_dir, headless=args.headless, max_notes=args.max)

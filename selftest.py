@@ -197,13 +197,15 @@ def _run(tmp: Path) -> None:
 
     # ---- P2 发布负载组装（离线可测部分）----
     assert site_auto.extract_note_id("https://www.xiaohongshu.com/explore/64a1b2c3d4e5f6a7b8c9d0e1?x=x") == "64a1b2c3d4e5f6a7b8c9d0e1"
-    img_dir = REPO / "drafts" / d0 / "img"
+    fday = "2020-01-02"  # 固定测试日期，避免撞上真实草稿目录
+    fpost = studio.save_post(fday, title="负载测试帖", tags=["测试"], cover_text="测", body="正文")
+    img_dir = REPO / "drafts" / fday / "img"
     img_dir.mkdir(parents=True, exist_ok=True)
     from PIL import Image  # noqa: PLC0415
 
     Image.new("RGB", (8, 8), (255, 255, 255)).save(img_dir / "p1.png")
-    payload = site_auto.build_payload(d0)
-    fm_expected = covers.load_post_frontmatter(REPO / "drafts" / d0 / "post.md")
+    payload = site_auto.build_payload(fday)
+    fm_expected = covers.load_post_frontmatter(fpost)
     assert payload["title"] == fm_expected["title"] and payload["title"]
     assert len(payload["images"]) == 1 and payload["images"][0].endswith("p1.png")
     print("OK  site_auto payload/extract")

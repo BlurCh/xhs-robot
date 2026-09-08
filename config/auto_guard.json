@@ -1,0 +1,5 @@
+{
+  "enabled": false,
+  "updated": "2026-09-08",
+  "policy": "方案A：半自动人工。当前账号收到风控警告，自动化（live publish/pull/detail/status/login）全部停用，账号冷却期7-14天真人使用。启用自动化的前提：全新试验小号 + 人工节奏 + 风险自担。届时把本文件 enabled 改为 true 即可。"
+}
